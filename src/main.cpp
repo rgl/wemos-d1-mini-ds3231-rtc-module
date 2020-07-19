@@ -3,6 +3,7 @@
 #include <Wire.h>
 #include <time.h>
 #include <sys/time.h>
+#include <LittleFS.h>
 #include <ESP8266WebServer.h>
 #include <ArduinoJson.h>
 
@@ -87,6 +88,10 @@ void setup() {
   struct timeval tv = {.tv_sec = (time_t)rtc_time.unixtime()};
   settimeofday(&tv, NULL);
 
+  // setup the file system.
+  // see https://docs.platformio.org/en/latest/platforms/espressif8266.html#using-filesystem
+  LittleFS.begin();
+
   // connect to the wifi.
   Serial.printf("Connecting to the %s wifi network as %s...", wifi_ssid, WiFi.macAddress().c_str());
   WiFi.mode(WIFI_STA);
@@ -103,10 +108,7 @@ void setup() {
     WiFi.localIP().toString().c_str());
 
   // start the web server.
-  server.on("/", []() {
-    server.send(200, "text/html", "<a href='/api/state'>/api/state</a><br>");
-  });
-  server.on("/api/state", []() {
+  server.on("/state.json", []() {
     time_t system_time = time(NULL);
     DateTime rtc_time = rtc.now();
     uint8_t rtc_status = ds3231_get_status();
@@ -120,6 +122,7 @@ void setup() {
 
     server.send(200, "text/json", doc.as<String>());
   });
+  server.serveStatic("/", LittleFS, "/");
   server.begin();
 
   Serial.println("Booted!");
