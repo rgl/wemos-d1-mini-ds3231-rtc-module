@@ -3,6 +3,8 @@
 #include <Wire.h>
 #include <time.h>
 #include <sys/time.h>
+#include <ESP8266WebServer.h>
+#include <ArduinoJson.h>
 
 static uint8_t i2c_read_register(uint8_t address, uint8_t register_number) {
   Wire.beginTransmission(address);
@@ -56,6 +58,11 @@ const char* daysOfTheWeek[] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thur
 
 static RTC_DS3231 rtc;
 
+const char* wifi_ssid = "TODO";
+const char* wifi_pass = "TODO";
+
+static ESP8266WebServer server(80);
+
 void setup() {
   Serial.begin(115200);
   Serial.println();
@@ -79,28 +86,73 @@ void setup() {
   DateTime rtc_time = rtc.now();
   struct timeval tv = {.tv_sec = (time_t)rtc_time.unixtime()};
   settimeofday(&tv, NULL);
+
+  // connect to the wifi.
+  Serial.printf("Connecting to the %s wifi network as %s...", wifi_ssid, WiFi.macAddress().c_str());
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(wifi_ssid, wifi_pass);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println();
+  Serial.printf(
+    "Connected to the %s wifi network as %s and got the %s IP address\n",
+    wifi_ssid,
+    WiFi.macAddress().c_str(),
+    WiFi.localIP().toString().c_str());
+
+  // start the web server.
+  server.on("/", []() {
+    server.send(200, "text/html", "<a href='/api/state'>/api/state</a><br>");
+  });
+  server.on("/api/state", []() {
+    time_t system_time = time(NULL);
+    DateTime rtc_time = rtc.now();
+    uint8_t rtc_status = ds3231_get_status();
+    float temperature = rtc.getTemperature();
+
+    DynamicJsonDocument doc(JSON_OBJECT_SIZE(4));
+    doc["rtcStatus"] = rtc_status;
+    doc["rtcTime"] = rtc_time.unixtime();
+    doc["systemTime"] = (int)system_time;
+    doc["temperature"] = temperature;
+
+    server.send(200, "text/json", doc.as<String>());
+  });
+  server.begin();
+
+  Serial.println("Booted!");
 }
 
+static unsigned long next_rtc_print_millis = 0;
+
 void loop() {
-  DateTime rtc_time = rtc.now();
-  time_t system_time = time(NULL);
-  uint8_t rtc_status = ds3231_get_status();
-  String rtc_status_flags = ds3231_status_string(rtc_status);
+  unsigned long m = millis();
 
-  Serial.printf(
-    "%s %d-%02d-%02dT%02d:%02d:%02dZ @%d (rtc) @%d (system) %.2f°C 0x%02x (%s)\n",
-    daysOfTheWeek[rtc_time.dayOfTheWeek()],
-    rtc_time.year(),
-    rtc_time.month(),
-    rtc_time.day(),
-    rtc_time.hour(),
-    rtc_time.minute(),
-    rtc_time.second(),
-    rtc_time.unixtime(),
-    (int)system_time,
-    rtc.getTemperature(),
-    rtc_status,
-    ds3231_status_string(rtc_status).c_str());
+  if (m > next_rtc_print_millis) {
+    next_rtc_print_millis = m + 30*1000;
 
-  delay(5000);
+    DateTime rtc_time = rtc.now();
+    time_t system_time = time(NULL);
+    uint8_t rtc_status = ds3231_get_status();
+    String rtc_status_flags = ds3231_status_string(rtc_status);
+
+    Serial.printf(
+      "%s %d-%02d-%02dT%02d:%02d:%02dZ @%d (rtc) @%d (system) %.2f°C 0x%02x (%s)\n",
+      daysOfTheWeek[rtc_time.dayOfTheWeek()],
+      rtc_time.year(),
+      rtc_time.month(),
+      rtc_time.day(),
+      rtc_time.hour(),
+      rtc_time.minute(),
+      rtc_time.second(),
+      rtc_time.unixtime(),
+      (int)system_time,
+      rtc.getTemperature(),
+      rtc_status,
+      ds3231_status_string(rtc_status).c_str());
+  }
+
+  server.handleClient();
 }
