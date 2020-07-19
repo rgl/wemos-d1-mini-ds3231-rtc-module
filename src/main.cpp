@@ -112,13 +112,13 @@ void setup() {
     time_t system_time = time(NULL);
     DateTime rtc_time = rtc.now();
     uint8_t rtc_status = ds3231_get_status();
-    float temperature = rtc.getTemperature();
+    float rtc_temperature = rtc.getTemperature();
 
     DynamicJsonDocument doc(JSON_OBJECT_SIZE(4));
     doc["rtcStatus"] = rtc_status;
     doc["rtcTime"] = rtc_time.unixtime();
+    doc["rtcTemperature"] = rtc_temperature;
     doc["systemTime"] = (int)system_time;
-    doc["temperature"] = temperature;
 
     server.send(200, "text/json", doc.as<String>());
   });
