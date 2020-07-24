@@ -1,9 +1,0 @@
-<script>
-fetch('/state.json').then(response => response.json()).then(state => {
-  console.log(state);
-  var rtcTime = new Date(state.rtcTime*1000);
-  var systemTime = new Date(state.systemTime*1000);
-  console.log(rtcTime);
-  console.log(systemTime);
-});
-</script>

@@ -64,6 +64,71 @@ const char* wifi_pass = "TODO";
 
 static ESP8266WebServer server(80);
 
+bool streamWebUiFile(String path) {
+  if (server.method() != HTTP_GET && server.method() != HTTP_HEAD) {
+    return false;
+  }
+
+  if (path == "/favicon.ico") {
+    return false;
+  }
+
+  auto is_root_path = path == "/";
+  if (is_root_path) {
+    path = "/index.html";
+  }
+
+  auto path_exists = LittleFS.exists(path);
+  auto path_gz = path + ".gz";
+  auto path_gz_exists = LittleFS.exists(path_gz);
+  auto contentType = mime::getContentType(path);
+
+  // whether to cache all non-index.html resources forever.
+  // NB all non-index.html files have a cache busting hash in their
+  //    name, e.g., bundle.2ca75.js, and can be cached forever.
+  auto cache_forever = false;
+
+  // if the requested file does not exist, its probably because it is a
+  // client-side route, and as such, we serve the web-ui.
+  if (!path_exists && !path_gz_exists) {
+    path_gz_exists = true;
+    path_gz = "/index.html.gz";
+    contentType = "text/html";
+  } else {
+    cache_forever = !is_root_path;
+  }
+
+  //Serial.printf("Serving path=%s (%d) path_gz=%s (%d)\n", path.c_str(), path_exists, path_gz.c_str(), path_gz_exists);
+
+  // if a <path>.gz file exists, use it.
+  // NB almost all of the web-ui files are gzipped (when their compressed
+  //    size is smaller than the original).
+  File file = LittleFS.open(path_gz_exists ? path_gz : path, "r");
+  if (!file) {
+    return false;
+  }
+  if (!file.isFile()) {
+      file.close();
+      return false;
+  }
+  if (cache_forever) {
+    // NB we are not really caching forever, but for the max-recommended
+    //    value of 31536000 (1 year).
+    server.sendHeader("Cache-Control", "max-age=31536000");
+  }
+  server.streamFile(file, contentType, server.method());
+  file.close();
+  return true;
+}
+
+void handleNotFound() {
+  String path = ESP8266WebServer::urlDecode(server.uri());
+  if (streamWebUiFile(path)) {
+    return;
+  }
+  server.send(404, "text/plain", "Not found");
+}
+
 void setup() {
   Serial.begin(115200);
   Serial.println();
@@ -92,6 +157,12 @@ void setup() {
   // see https://docs.platformio.org/en/latest/platforms/espressif8266.html#using-filesystem
   LittleFS.begin();
 
+  // // list the file system contents.
+  // auto root_dir = LittleFS.openDir("/");
+  // while (root_dir.next()) {
+  //   Serial.printf("FS %s %s\n", root_dir.isDirectory() ? "dir" : "file", root_dir.fileName().c_str());
+  // }
+
   // connect to the wifi.
   Serial.printf("Connecting to the %s wifi network as %s...", wifi_ssid, WiFi.macAddress().c_str());
   WiFi.mode(WIFI_STA);
@@ -107,7 +178,7 @@ void setup() {
     WiFi.macAddress().c_str(),
     WiFi.localIP().toString().c_str());
 
-  // start the web server.
+  // configure the web server.
   server.on("/state.json", []() {
     time_t system_time = time(NULL);
     DateTime rtc_time = rtc.now();
@@ -123,7 +194,17 @@ void setup() {
 
     server.send(200, "text/json", doc.as<String>());
   });
-  server.serveStatic("/", LittleFS, "/");
+  server.on("/time.json", []() {
+    if (server.method() == HTTP_GET) {
+      time_t system_time = time(NULL);
+      DynamicJsonDocument doc(JSON_OBJECT_SIZE(1));
+      doc["time"] = (int)system_time;
+      server.send(200, "text/json", doc.as<String>());
+    }
+  });
+  server.onNotFound(handleNotFound);
+
+  // start the web server.
   server.begin();
 
   Serial.println("Booted!");
